@@ -1,0 +1,44 @@
+name: opaleye-gen
+version: 0.1.0.0
+github: "mudont/opaleye-gen"
+license: BSD3
+author: "mudont"
+maintainer: "maverickone@gmail.com"
+copyright: "2021 mudont"
+
+extra-source-files:
+  - README.md
+
+synopsis: A lightweight program to generate Opaleye boilerplate from a database
+category: Web
+
+description: Please see the README
+
+dependencies:
+  - base >= 4.6 && < 5
+  - bytestring
+  - cases
+  - containers
+  - countable-inflections >= 0.2.0
+  - interpolatedstring-perl6
+  - opaleye
+  - optparse-generic
+  - optparse-applicative
+  - postgresql-simple
+  - product-profunctors
+  - template-haskell
+  - text
+  - time
+
+_exe-defs: &exe-defaults
+  source-dirs:
+    - src
+  ghc-options:
+    - -threaded
+    - -rtsopts
+    - -with-rtsopts=-N
+    - -Wall
+executables:
+  opaleye-gen:
+    <<: *exe-defaults
+    main: Main.hs

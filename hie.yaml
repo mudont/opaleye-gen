@@ -1,0 +1,16 @@
+cradle:
+  stack:
+    - path: "./src/Main.hs"
+      component: "opaleye-gen:exe:opaleye-gen"
+
+    - path: "./src/Database.hs"
+      component: "opaleye-gen:exe:opaleye-gen"
+
+    - path: "./src/Generate.hs"
+      component: "opaleye-gen:exe:opaleye-gen"
+
+    - path: "./src/Util.hs"
+      component: "opaleye-gen:exe:opaleye-gen"
+
+    - path: "./src/Paths_opaleye_gen.hs"
+      component: "opaleye-gen:exe:opaleye-gen"
