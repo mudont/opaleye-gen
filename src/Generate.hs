@@ -1,32 +1,35 @@
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE QuasiQuotes       #-}
+{-# LANGUAGE QuasiQuotes #-}
 
 module Generate where
 
-import           Prelude        hiding (unwords)
-
-import qualified Cases          as C
-import           Data.Monoid    ((<>))
-import           Data.Text      hiding (map)
-import           Database
-import           Text.Countable
-import           Util           (q, qc)
+import qualified Cases as C
+import Data.Text hiding (map)
+import Database
+import Text.Countable
+import Util (q, qc)
+import Prelude hiding (unwords)
 
 data TableDefinition = TableDefinition
-  { tableName :: Text
-  , columns   :: [InformationSchemaColumn]
+  { tableName :: Text,
+    columns :: [InformationSchemaColumn]
   }
 
 fileHeaderText :: Text
-fileHeaderText = [q|
-  {-# LANGUAGE TemplateHaskell #-}
-  {-# LANGUAGE MultiParamTypeClasses #-}
+fileHeaderText =
+  [q|
+  {-# LANGUAGE DeriveGeneric #-}
   {-# LANGUAGE FlexibleContexts #-}
   {-# LANGUAGE FlexibleInstances #-}
+  {-# LANGUAGE MultiParamTypeClasses #-}
+  {-# LANGUAGE StandaloneDeriving #-}
+  {-# LANGUAGE TemplateHaskell #-}
+
 
   module Database where
 
-  import qualified Data.Aeson                 as JSON
+  import           Prelude
+  import qualified Data.Aeson                 as JSON()
   import           Data.Profunctor
   import           Data.Profunctor.Product
   import           Data.Profunctor.Product.Default
@@ -34,7 +37,7 @@ fileHeaderText = [q|
   import           Data.Scientific
   import           Data.Text
   import           Data.Time
-  import           Data.UUID
+  import           Data.UUID()
   import           GHC.Int
   import           Opaleye hiding (fromNullable)
 
@@ -65,7 +68,8 @@ fileHeaderText = [q|
   |]
 
 fullTableText :: TableDefinition -> Text
-fullTableText td = [qc|
+fullTableText td =
+  [qc|
   ---- Types for table: {tableName td} ----
 
   {genAbstractType td}
@@ -88,7 +92,8 @@ fullTableText td = [qc|
   |]
 
 genAbstractType :: TableDefinition -> Text
-genAbstractType t = [qc|
+genAbstractType t =
+  [qc|
   data {tname}' {args} =
     {tname}
       \{ {columnRows}
@@ -103,12 +108,17 @@ genAbstractType t = [qc|
     columnDesc c = [qc|{fieldName c} :: {polyArg c}|]
 
 genConcreteType :: TableDefinition -> Text
-genConcreteType t = [qc|type {typeName t} = {typeName t}' {concreteTypes}|]
+genConcreteType t =
+  [qc|
+      type {typeName t} = {typeName t}' {concreteTypes}
+      deriving instance Show {typeName t}
+      |]
   where
     concreteTypes = unwords $ map parenthesize (columns t)
-    parenthesize c = if is_nullable c == "YES"
-                     then [qc|({typeNameToHType c})|]
-                     else typeNameToHType c
+    parenthesize c =
+      if is_nullable c == "YES"
+        then [qc|({typeNameToHType c})|]
+        else typeNameToHType c
 
 data TableDefType = Read | Write | Nullable deriving (Show, Eq)
 
@@ -121,9 +131,10 @@ genPgTypes Nullable t =
 genPgTypes dt t = [qc|type {typeName t}{show dt}Columns = {typeName t}' {pgTypes}|]
   where
     pgTypes = unwords $ map specializeForId (columns t)
-    specializeForId c = if (column_name c == "id" || is_nullable c == "YES") && dt == Write
-                        then [qc|(Maybe (Column {pgTypeForColumn c}))|]
-                        else [qc|(Column {pgTypeForColumn c})|]
+    specializeForId c =
+      if (column_name c == "id" || is_nullable c == "YES") && dt == Write
+        then [qc|(Maybe (Column {pgTypeForColumn c}))|]
+        else [qc|(Column {pgTypeForColumn c})|]
 
 genNullableType :: TableDefinition -> Text
 genNullableType t = [qc|type {typeName t}Nullable = {typeName t}' {maybeTypes}|]
@@ -132,7 +143,8 @@ genNullableType t = [qc|type {typeName t}Nullable = {typeName t}' {maybeTypes}|]
     parenthesize c = [qc|({typeNameToHTypeMaybe ApplyToMaybe c})|]
 
 genSequence :: TableDefinition -> Text
-genSequence t = [qc|
+genSequence t =
+  [qc|
   {fromNullableSig}
   {fromNullableDef}|]
   where
@@ -143,7 +155,8 @@ genSequence t = [qc|
     fromNullableDef = [qc|fromNullable{typeName t} = fromNullable|]
 
 tableDefinition :: TableDefinition -> Text
-tableDefinition t = [qc|
+tableDefinition t =
+  [qc|
   {typeName'}Table :: Table {typeName t}WriteColumns {typeName t}ReadColumns
   {typeName'}Table = Table "{tableName t}" (p{typeName t}
     {typeName t}
@@ -153,92 +166,96 @@ tableDefinition t = [qc|
   where
     typeName' = singularize . C.camelize $ tableName t
     fieldDefinitions = intercalate "\n    , " $ map fieldDefinition (columns t)
-    fieldDefinition c = if column_name c == "id" || is_nullable c == "YES"
-                        then [qc|{fieldName c} = optional "{column_name c}"|]
-                        else [qc|{fieldName c} = required "{column_name c}"|]
+    fieldDefinition c =
+      if column_name c == "id" || is_nullable c == "YES"
+        then [qc|{fieldName c} = optionalTableField "{column_name c}"|]
+        else [qc|{fieldName c} = requiredTableField "{column_name c}"|]
 
 typeNameToHType :: InformationSchemaColumn -> Text
 typeNameToHType col = typeNameToHTypeMaybe apply col
   where
-    apply = if is_nullable col == "YES"
-              then ApplyToMaybe
-              else DoNotApplyToMaybe
+    apply =
+      if is_nullable col == "YES"
+        then ApplyToMaybe
+        else DoNotApplyToMaybe
 
 data ApplyToMaybe = ApplyToMaybe | DoNotApplyToMaybe
 
 -- Some dirty mappings, these don't account for Array correctly, there should
 -- be another check for that on the another column, the udt_name will be _type for
 -- an array of `type`
-typeNameToHTypeMaybe :: ApplyToMaybe
-                     -> InformationSchemaColumn
-                     -> Text
+typeNameToHTypeMaybe ::
+  ApplyToMaybe ->
+  InformationSchemaColumn ->
+  Text
 typeNameToHTypeMaybe applyToMaybe col =
   case udt_name col of
-    "bool"        -> mval <> "Bool"
-    "int2"        -> mval <> "Int16"
-    "int4"        -> mval <> "Int32"
-    "int8"        -> mval <> "Int64"
-    "float4"      -> mval <> "Float"
-    "float8"      -> mval <> "Double"
-    "numeric"     -> mval <> "Scientific"
-    "char"        -> mval <> "Char"
-    "text"        -> mval <> "Text"
-    "bytea"       -> mval <> "ByteString"
-    "date"        -> mval <> "Day"
-    "timestamp"   -> mval <> "LocalTime"
+    "bool" -> mval <> "Bool"
+    "int2" -> mval <> "Int16"
+    "int4" -> mval <> "Int32"
+    "int8" -> mval <> "Int64"
+    "float4" -> mval <> "Float"
+    "float8" -> mval <> "Double"
+    "numeric" -> mval <> "Scientific"
+    "char" -> mval <> "Char"
+    "text" -> mval <> "Text"
+    "bytea" -> mval <> "ByteString"
+    "date" -> mval <> "Day"
+    "timestamp" -> mval <> "LocalTime"
     "timestamptz" -> mval <> "UTCTime"
-    "time"        -> mval <> "TimeOfDay"
-    "timetz"      -> mval <> "TimeOfDay"
-    "interval"    -> mval <> "DiffTime"
-    "uuid"        -> mval <> "UUID"
-    "json"        -> mval <> "JSON.Value"
-    "jsonb"       -> mval <> "JSON.Value"
-    "varchar"     -> mval <> "Text"
-    "_varchar"    -> "[Text]"
-    "_int4"       -> "[Int32]"
-    "oid"         -> mval <> "Int64"
-    "inet"        -> mval <> "Text"
-    other         -> error $ "Unimplemented PostgresQL type conversion for " <> show other
+    "time" -> mval <> "TimeOfDay"
+    "timetz" -> mval <> "TimeOfDay"
+    "interval" -> mval <> "DiffTime"
+    "uuid" -> mval <> "UUID"
+    "json" -> mval <> "JSON.Value"
+    "jsonb" -> mval <> "JSON.Value"
+    "varchar" -> mval <> "Text"
+    "_varchar" -> "[Text]"
+    "_int4" -> "[Int32]"
+    "oid" -> mval <> "Int64"
+    "inet" -> mval <> "Text"
+    other -> error $ "Unimplemented PostgresQL type conversion for " <> show other
   where
     mval = case applyToMaybe of
-             ApplyToMaybe      -> "Maybe "
-             DoNotApplyToMaybe -> ""
+      ApplyToMaybe -> "Maybe "
+      DoNotApplyToMaybe -> ""
 
 pgTypeForNullableColumn :: InformationSchemaColumn -> Text
-pgTypeForNullableColumn c = pgTypeForColumn c{is_nullable = "YES"}
+pgTypeForNullableColumn c = pgTypeForColumn c {is_nullable = "YES"}
 
 pgTypeForColumn :: InformationSchemaColumn -> Text
 pgTypeForColumn col =
   case udt_name col of
-    "bool"        -> nullify "PGBool"
-    "int2"        -> nullify "PGInt2"
-    "int4"        -> nullify "PGInt4"
-    "int8"        -> nullify "PGInt8"
-    "float4"      -> nullify "PGFloat4"
-    "float8"      -> nullify "PGFloat8"
-    "numeric"     -> nullify "PGNumeric"
-    "char"        -> nullify "PGText"
-    "text"        -> nullify "PGText"
-    "bytea"       -> nullify "PGBytea"
-    "date"        -> nullify "PGDate"
-    "timestamp"   -> nullify "PGTimestamp"
+    "bool" -> nullify "PGBool"
+    "int2" -> nullify "PGInt2"
+    "int4" -> nullify "PGInt4"
+    "int8" -> nullify "PGInt8"
+    "float4" -> nullify "PGFloat4"
+    "float8" -> nullify "PGFloat8"
+    "numeric" -> nullify "PGNumeric"
+    "char" -> nullify "PGText"
+    "text" -> nullify "PGText"
+    "bytea" -> nullify "PGBytea"
+    "date" -> nullify "PGDate"
+    "timestamp" -> nullify "PGTimestamp"
     "timestamptz" -> nullify "PGTimestamptz"
-    "time"        -> nullify "PGTime"
-    "timetz"      -> nullify "PGTime"
-    "interval"    -> nullify "PGInt8"
-    "uuid"        -> nullify "PGUuid"
-    "json"        -> nullify "PGJson"
-    "jsonb"       -> nullify "PGJsonb"
-    "varchar"     -> nullify "PGText"
-    "_varchar"    -> nullify "(PGArray Text)"
-    "_int4"       -> nullify "(PGArray Int4)"
-    "oid"         -> nullify "PGInt8"
-    "inet"        -> nullify "PGText"
-    other         -> error $ "Unimplemented PostgresQL type conversion for " <> show other
+    "time" -> nullify "PGTime"
+    "timetz" -> nullify "PGTime"
+    "interval" -> nullify "PGInt8"
+    "uuid" -> nullify "PGUuid"
+    "json" -> nullify "PGJson"
+    "jsonb" -> nullify "PGJsonb"
+    "varchar" -> nullify "PGText"
+    "_varchar" -> nullify "(PGArray Text)"
+    "_int4" -> nullify "(PGArray Int4)"
+    "oid" -> nullify "PGInt8"
+    "inet" -> nullify "PGText"
+    other -> error $ "Unimplemented PostgresQL type conversion for " <> show other
   where
-    nullify v = if is_nullable col == "YES"
-                then "(Nullable " <> v <> ")"
-                else v
+    nullify v =
+      if is_nullable col == "YES"
+        then "(Nullable " <> v <> ")"
+        else v
 
 --- Formatting functions
 
@@ -250,4 +267,5 @@ typeName = singularize . camelize . tableName
 
 fieldName :: InformationSchemaColumn -> Text
 fieldName c = haskelly (table_name c) <> camelize (column_name c)
-  where haskelly = singularize . C.camelize
+  where
+    haskelly = singularize . C.camelize
